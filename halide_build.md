@@ -16,6 +16,7 @@ export CLANG=`pwd`/bin/clang
 cd halide_build/
 mkdir halide && cd halide
 make -f ../../Halide/Makefile -j 20
+export HALIDE_ROOT_DIR=`pwd`
 
 # Make halide with CMake
 mkdir cmake_build
@@ -23,3 +24,11 @@ cd cmake_build
 export LLVM_ROOT=/path/to/llvm3.7/build
 cmake -DLLVM_BIN=${LLVM_ROOT}/bin -DLLVM_INCLUDE="${LLVM_ROOT}/../include;${LLVM_ROOT}/include" -DLLVM_LIB=${LLVM_ROOT}/lib -DLLVM_VERSION=37 ..
 make -j8
+
+# Setup env for python binding
+cd Halide/python_bindings
+mkdir build && cd build
+cmake ../ -DUSE_PYTHON=2 -DHALIDE_ROOT_DIR=$HALIDE_ROOT_DIR
+-DUSE_BOOST_NUMPY=OFF
+make -j 
+
