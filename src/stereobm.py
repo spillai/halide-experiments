@@ -1,51 +1,62 @@
 import numpy as np
-from scipy.misc import imread, imsave
+# from scipy.misc import imread, imsave
+# from imageIO import imread
+import cv2
+
 import os.path
 import time
 
 import halide as h
 from halide import Var, Func, RDom, UInt, Int
 
+from bot_vision.imshow_utils import imshow_cv
+from pybot_vision import scaled_color_disp
+
 def main(): 
     # First we'll load the input image we wish to brighten.
-    left = imread(os.path.join("../data/left.png"), mode='RGB')
-    right = imread(os.path.join("../data/right.png"), mode='RGB')
+    left = cv2.imread(os.path.join("../data/im0.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
+    right = cv2.imread(os.path.join("../data/im1.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
     assert left.dtype == np.uint8
     assert right.dtype == np.uint8
+
+    print left.shape
 
     # We create an Image object to wrap the numpy array
     left_image = h.Image(left)
     right_image = h.Image(right)
-
-    height, width = left.shape[:2]
-
-    SADWindowSize = 11
-    win2 = SADWindowSize / 2
+    W, H, C = left_image.width(), left_image.height(), left_image.channels()
+    print 'W {} x H {} x C {}'.format(W,H,C)
+    
+    # width, height = left.shape[:2]
+    SADWindowSize = 15
     numDisparities = 128
-    maxDisparity = numDisparities - 1
-    xmin = maxDisparity + win2
-    xmax = width - win2 - 1
-    ymin = win2
-    ymax = height - win2 - 1
 
-    disp_image = stereoBM(left_image, right_image, 
-             SADWindowSize, 0, (numDisparities-1)/16*16+16, xmin, xmax, ymin, ymax)
+    disp_image = stereoBM(left_image, right_image, W, H, SADWindowSize, 0, numDisparities)
 
-    # This time it's safe to evaluate the output over the some
-    # domain as the input, because we have a boundary condition.
+    # # Realize xsobel
+    # result = h.Image(Int(8), disp_image)
+    # disp = h.image_to_ndarray(result).transpose(1,0)
+    # print disp[:10, :10]
+    # imshow_cv('disp', (disp + 31) / 62.0, block=True)
+
+    # Realize disparity
     result = h.Image(UInt(16), disp_image)
-    disp = h.image_to_ndarray(result)
-    print 'Disparity', disp.shape
+    disp = h.image_to_ndarray(result).transpose(1,0)
+    
+    print 'Input', left.shape[:2]
+    print 'Disparity', disp.shape[:2]
+
+    disp_color = scaled_color_disp(disp)
+    imshow_cv('disp', disp_color, block=True)
 
 
 def profile(func, W, H): 
     func.compile_jit()
-    
-    niters = 10
+    niters = 100
     st = time.time()
     for j in xrange(niters): 
         func.realize(W,H)
-    print('Total time taken to realize {} s'.format((time.time() - st) / niters))
+    print('Total time taken to realize {} ms'.format((time.time() - st) * 1000.0 / niters))
 
 def prefilterXSobel(image, W, H): 
     x, y = Var("x"), Var("y")
@@ -55,7 +66,7 @@ def prefilterXSobel(image, W, H):
 
     temp, xSobel = Func("temp"), Func("xSobel")
     temp[x, y] = clamped[x+1, y] - clamped[x-1, y]
-    xSobel[x, y] = h.cast(Int(16), h.clamp(temp[x, y-1] + 2 * temp[x, y] + temp[x, y+1], -31, 31))
+    xSobel[x, y] = h.cast(Int(8), h.clamp(temp[x, y-1] + 2 * temp[x, y] + temp[x, y+1], -31, 31))
 
     xi, xo, yi, yo = Var("xi"), Var("xo"), Var("yi"), Var("yo")
     xSobel.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).parallel(yo).parallel(xo)
@@ -63,7 +74,7 @@ def prefilterXSobel(image, W, H):
     return xSobel
 
 def findStereoCorrespondence(left, right, SADWindowSize, minDisparity, numDisparities,
-                             width, height, xmin, xmax, ymin, ymax,
+                             xmin, xmax, ymin, ymax,
                              x_tile_size=32, y_tile_size=32, test=False, uniquenessRatio=0.15, disp12MaxDiff=1): 
     """ Returns Func (left: Func, right: Func) """
 
@@ -98,15 +109,15 @@ def findStereoCorrespondence(left, right, SADWindowSize, minDisparity, numDispar
     disp_left[xi, yi, xo, yo] = h.tuple_select(
             cSAD[rd, xi, yi, xo, yo] < disp_left[xi, yi, xo, yo][1],
             h.Tuple(h.cast(UInt(16), rd), cSAD[rd, xi, yi, xo, yo]), 
-            h.Tuple(h.cast(UInt(16), minDisparity), h.cast(UInt(16), (2<<16)-1)))
+            h.Tuple(disp_left[xi, yi, xo, yo]))
 
     FILTERED = -16
     disp = Func("disp")
     disp[x, y] = h.select(
-        x > xmax-xmin or y > ymax-ymin,
+        #  x > xmax-xmin or y > ymax-ymin,
+        x > xmax, 
         h.cast(UInt(16), FILTERED), 
         h.cast(UInt(16), disp_left[x % x_tile_size, y % y_tile_size, x / x_tile_size, y / y_tile_size][0]))
-
 
     # Schedule
     vector_width = 8
@@ -139,30 +150,38 @@ def findStereoCorrespondence(left, right, SADWindowSize, minDisparity, numDispar
     return disp
 
 
-def stereoBM(left_image, right_image, 
-             SADWindowSize, minDisparity, numDisparities, 
-             xmin, xmax, ymin, ymax): 
+def stereoBM(left_image, right_image, width, height, 
+             SADWindowSize, minDisparity, numDisparities): 
     
     x, y, c = Var("x"), Var("y"), Var("c")
     left, right = Func("left"), Func("right")
     left[x, y, c] = left_image[x, y, c]
     right[x, y, c] = right_image[x, y, c]
 
-    width, height = left_image.width(), left_image.height()
+    W, H, C = left_image.width(), left_image.height(), left_image.channels()
     
-    filteredLeft = prefilterXSobel(left, width, height)
-    filteredRight = prefilterXSobel(right, width, height)
+    filteredLeft = prefilterXSobel(left, W, H)
+    filteredRight = prefilterXSobel(right, W, H)
+
+    # profile(filteredLeft, W, H)
+    # return filteredLeft.realize(W, H)
+
+    win2 = SADWindowSize / 2
+    maxDisparity = numDisparities - 1
+    xmin = maxDisparity + win2
+    xmax = width - win2 - 1
+    ymin = win2
+    ymax = height - win2 - 1
 
     x_tile_size, y_tile_size = 32, 32
     disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities, 
-                                    left_image.width(), left_image.height(), 
                                     xmin, xmax, ymin, ymax, x_tile_size, y_tile_size)
 
     args = h.ArgumentsVector()
     disp.compile_to_lowered_stmt("disp.html", args, h.HTML)
 
-    W = (xmax-xmin) / x_tile_size * x_tile_size + x_tile_size
-    H = (ymax-ymin) / x_tile_size * x_tile_size + x_tile_size
+    # W = (xmax-xmin) / x_tile_size * x_tile_size + x_tile_size
+    # H = (ymax-ymin) / x_tile_size * x_tile_size + x_tile_size
 
     # Compile
     profile(disp, W, H)
