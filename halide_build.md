@@ -1,13 +1,28 @@
 Halide installation
 ====
 
+Follow instructions on https://github.com/halide/Halide
+Build straight from source, with terminfo off, otherwise python import
+of halide will complain
+
 ```sh
 git clone https://github.com/halide/Halide.git
 mkdir halide_build
 cd halide_build
-wget http://llvm.org/releases/3.7.1/clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04.tar.xz
-tar -xvf clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04.tar.xz
-cd clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04
+svn co https://llvm.org/svn/llvm-project/llvm/branches/release_37 llvm3.7
+svn co https://llvm.org/svn/llvm-project/cfe/branches/release_37 llvm3.7/tools/clang
+
+cd llvm3.7
+mkdir build
+cd build
+cmake -DLLVM_ENABLE_TERMINFO=OFF
+-DLLVM_TARGETS_TO_BUILD="X86;ARM;NVPTX;AArch64;Mips;PowerPC"
+-DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_BUILD_TYPE=Release ..
+make -j8
+
+# wget http://llvm.org/releases/3.7.1/clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04.tar.xz
+# tar -xvf clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04.tar.xz
+# cd clang+llvm-3.7.1-x86_64-linux-gnu-ubuntu-14.04
 
 export LLVM_CONFIG=`pwd`/bin/llvm-config
 export CLANG=`pwd`/bin/clang
