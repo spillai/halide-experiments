@@ -14,8 +14,8 @@ from pybot_vision import scaled_color_disp
 
 def main(): 
     # First we'll load the input image we wish to brighten.
-    left = cv2.imread(os.path.join("../data/im0.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
-    right = cv2.imread(os.path.join("../data/im1.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
+    left = cv2.imread(os.path.join("../data/left.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
+    right = cv2.imread(os.path.join("../data/right.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
     assert left.dtype == np.uint8
     assert right.dtype == np.uint8
 
@@ -52,7 +52,7 @@ def main():
 
 def profile(func, W, H): 
     func.compile_jit()
-    niters = 100
+    niters = 10
     st = time.time()
     for j in xrange(niters): 
         func.realize(W,H)
@@ -87,7 +87,7 @@ def findStereoCorrespondence(left, right, SADWindowSize, minDisparity, numDispar
 
     diff_T = Func("diff_T")
     xi, xo, yi, yo = Var("xi"), Var("xo"), Var("yi"), Var("yo")
-    diff_T[d, xi, yi, xo, yo] = diff[d, xi+xo*x_tile_size+xmin, yi+yo*y_tile_size+ymin]
+    diff_T[d, xi, yi, xo, yo] = diff[d, xi + xo * x_tile_size + xmin, yi + yo * y_tile_size + ymin]
 
     cSAD, vsum = Func("cSAD"), Func("vsum")
     rk = RDom(-win2, SADWindowSize, "rk")
@@ -113,11 +113,13 @@ def findStereoCorrespondence(left, right, SADWindowSize, minDisparity, numDispar
 
     FILTERED = -16
     disp = Func("disp")
+
     disp[x, y] = h.select(
-        #  x > xmax-xmin or y > ymax-ymin,
-        x > xmax, 
-        h.cast(UInt(16), FILTERED), 
-        h.cast(UInt(16), disp_left[x % x_tile_size, y % y_tile_size, x / x_tile_size, y / y_tile_size][0]))
+        # x > xmax-xmin or y > ymax-ymin,
+        x < xmax, 
+        h.cast(UInt(16), disp_left[x % x_tile_size, y % y_tile_size, x / x_tile_size, y / y_tile_size][0]), 
+        h.cast(UInt(16), FILTERED))
+        
 
     # Schedule
     vector_width = 8
