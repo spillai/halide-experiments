@@ -1,7 +1,7 @@
 Halide installation
 ====
 
-Follow instructions on https://github.com/halide/Halide
+Follow instructions on https://github.com/halide/Halide<br>
 Build straight from source, with terminfo off, otherwise python import
 of halide will complain
 
