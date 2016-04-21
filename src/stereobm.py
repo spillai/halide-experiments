@@ -1,7 +1,5 @@
-import numpy as np
-# from scipy.misc import imread, imsave
-# from imageIO import imread
 import cv2
+import numpy as np
 
 import os.path
 import time
@@ -165,9 +163,6 @@ def stereoBM(left_image, right_image, width, height,
     filteredLeft = prefilterXSobel(left, W, H)
     filteredRight = prefilterXSobel(right, W, H)
 
-    # profile(filteredLeft, W, H)
-    # return filteredLeft.realize(W, H)
-
     win2 = SADWindowSize / 2
     maxDisparity = numDisparities - 1
     xmin = maxDisparity + win2
@@ -181,9 +176,6 @@ def stereoBM(left_image, right_image, width, height,
 
     args = h.ArgumentsVector()
     disp.compile_to_lowered_stmt("disp.html", args, h.HTML)
-
-    # W = (xmax-xmin) / x_tile_size * x_tile_size + x_tile_size
-    # H = (ymax-ymin) / x_tile_size * x_tile_size + x_tile_size
 
     # Compile
     profile(disp, W, H)
