@@ -1,3 +1,7 @@
+# Author: Sudeep Pillai (spillai@csail.mit.edu)
+# License: MIT
+# Python port of https://github.com/mzhang94/stereo/blob/master/alg-StereoBM-Halide/src/stereoBM.cpp
+
 import cv2
 import numpy as np
 
@@ -5,48 +9,47 @@ import os.path
 import time
 
 import halide as h
-from halide import Var, Func, RDom, UInt, Int
+from halide import Image, Var, Func, RDom, UInt, Int
 
-from bot_vision.imshow_utils import imshow_cv
-from pybot_vision import scaled_color_disp
+def colormap(im, min_threshold=0.01):
+    mask = im<min_threshold
+    hsv = np.zeros((im.shape[0], im.shape[1], 3), np.uint8)
+    hsv[...,0] = (im * 180).astype(np.uint8)
+    hsv[...,1] = 255
+    hsv[...,2] = 255
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    bgr[mask] = 0
+    return bgr
 
 def main(): 
-    # First we'll load the input image we wish to brighten.
     left = cv2.imread(os.path.join("../data/left.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
     right = cv2.imread(os.path.join("../data/right.png"), cv2.IMREAD_COLOR).transpose(1,0,2)
     assert left.dtype == np.uint8
     assert right.dtype == np.uint8
 
-    print left.shape
-
     # We create an Image object to wrap the numpy array
-    left_image = h.Image(left)
-    right_image = h.Image(right)
+    left_image = Image(left)
+    right_image = Image(right)
     W, H, C = left_image.width(), left_image.height(), left_image.channels()
     print 'W {} x H {} x C {}'.format(W,H,C)
-    
-    # width, height = left.shape[:2]
+
+    # StereoBM
     SADWindowSize = 15
     numDisparities = 128
-
     disp_image = stereoBM(left_image, right_image, W, H, SADWindowSize, 0, numDisparities)
 
-    # # Realize xsobel
-    # result = h.Image(Int(8), disp_image)
-    # disp = h.image_to_ndarray(result).transpose(1,0)
-    # print disp[:10, :10]
-    # imshow_cv('disp', (disp + 31) / 62.0, block=True)
-
     # Realize disparity
-    result = h.Image(UInt(16), disp_image)
+    result = Image(UInt(16), disp_image)
     disp = h.image_to_ndarray(result).transpose(1,0)
     
     print 'Input', left.shape[:2]
     print 'Disparity', disp.shape[:2]
 
-    disp_color = scaled_color_disp(disp)
-    imshow_cv('disp', disp_color, block=True)
-
+    # Colorize stereo disparity
+    disp_color = colormap(disp.astype(np.float32) / numDisparities)
+    cv2.imwrite('disp.png', disp_color)
+    cv2.imshow('disp', disp_color)
+    cv2.waitKey(0)
 
 def profile(func, W, H): 
     func.compile_jit()
@@ -159,25 +162,27 @@ def stereoBM(left_image, right_image, width, height,
     right[x, y, c] = right_image[x, y, c]
 
     W, H, C = left_image.width(), left_image.height(), left_image.channels()
-    
+
+    # Sobel filtering
     filteredLeft = prefilterXSobel(left, W, H)
     filteredRight = prefilterXSobel(right, W, H)
 
+    # Stereo block-matching 
     win2 = SADWindowSize / 2
     maxDisparity = numDisparities - 1
     xmin = maxDisparity + win2
     xmax = width - win2 - 1
     ymin = win2
     ymax = height - win2 - 1
-
     x_tile_size, y_tile_size = 32, 32
     disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities, 
                                     xmin, xmax, ymin, ymax, x_tile_size, y_tile_size)
 
+    # Write to pretty html
     args = h.ArgumentsVector()
     disp.compile_to_lowered_stmt("disp.html", args, h.HTML)
 
-    # Compile
+    # Compile / Profile
     profile(disp, W, H)
 
     # Start with a target suitable for the machine you're running
